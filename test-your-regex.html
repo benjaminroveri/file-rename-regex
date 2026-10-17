@@ -83,6 +83,7 @@
     }
 
     textarea,
+    select,
     input {
       width: 100%;
       border: 1px solid var(--line);
@@ -95,6 +96,7 @@
     }
 
     textarea:focus,
+    select:focus,
     input:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 4px rgb(233 86 47 / 12%);
@@ -107,12 +109,66 @@
     }
 
     input { height: 48px; padding: 0 14px; }
+    select { height: 48px; padding: 0 14px; }
 
-    .fields {
+    .steps {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
+      gap: 14px;
       margin-top: 20px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 18px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgb(255 255 255 / 65%);
+    }
+
+    .step label { margin-bottom: 7px; }
+
+    .step input { height: 44px; }
+
+    .step-number {
+      grid-column: 1 / -1;
+      margin: 0 0 -8px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .remove-step {
+      min-width: 40px;
+      min-height: 40px;
+      margin-top: 23px;
+      padding: 0;
+      background: #ece8df;
+      box-shadow: none;
+      color: var(--ink);
+    }
+
+    .remove-step:hover {
+      background: #e2ddd2;
+      box-shadow: none;
+    }
+
+    .add-step {
+      min-width: 0;
+      min-height: 40px;
+      padding: 0 18px;
+      background: #ece8df;
+      box-shadow: none;
+      color: var(--ink);
+    }
+
+    .add-step:hover {
+      background: #e2ddd2;
+      box-shadow: none;
     }
 
     .hint {
@@ -191,15 +247,10 @@
     }
 
     .result-list li {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-      align-items: center;
-      gap: 12px;
-      padding: 11px 13px;
+      padding: 14px;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: #fff;
-      font: 0.86rem/1.4 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     }
 
     .result-list li.unchanged { opacity: 0.56; }
@@ -207,6 +258,30 @@
     .filename { overflow-wrap: anywhere; }
     .arrow { color: var(--accent); font-family: inherit; font-weight: 800; }
     .conflict-note { color: var(--warning); font-family: Inter, sans-serif; font-size: 0.72rem; }
+
+    .process-title {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .process-stage {
+      display: grid;
+      grid-template-columns: 70px minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-top: 1px solid #efede7;
+      font: 0.84rem/1.4 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    .stage-label { color: var(--muted); font: 0.75rem Inter, sans-serif; }
+    .process-stage .filename { min-width: 0; }
+    .stage-result { min-width: 0; }
+    .stage-note { display: block; margin-top: 3px; color: var(--muted); font: 0.7rem Inter, sans-serif; }
 
     .regex-vars {
       display: flex;
@@ -231,10 +306,12 @@
 
     @media (max-width: 640px) {
       body { padding: 30px 14px; }
-      .fields { grid-template-columns: 1fr; }
+      .step { grid-template-columns: 1fr; gap: 12px; }
+      .step-number { grid-column: auto; margin-bottom: 0; }
+      .remove-step { margin-top: 0; }
       .actions { align-items: flex-start; flex-direction: column; }
-      .result-list li { grid-template-columns: 1fr; gap: 4px; }
-      .arrow { transform: rotate(90deg); width: max-content; }
+      .process-stage { grid-template-columns: 1fr; gap: 4px; }
+      .process-stage .arrow { transform: rotate(90deg); width: max-content; }
     }
   </style>
 </head>
@@ -248,21 +325,30 @@
 
     <section class="panel" aria-labelledby="form-title">
       <form id="rename-form" novalidate>
+        <label for="sample-select">Sample</label>
+        <select id="sample-select">
+          <option value="">Choose a sample...</option>
+        </select>
         <label for="filenames" id="form-title">Filenames</label>
         <textarea id="filenames" name="filenames" spellcheck="false" placeholder="photo_001.jpg&#10;photo_002.jpg&#10;notes.txt"></textarea>
 
-        <div class="fields">
-          <div>
-            <label for="filter-regex">Match regular expression</label>
-            <input id="filter-regex" name="filter" value="^photo_([0-9]+)\.jpg$" spellcheck="false" autocomplete="off">
-            <p class="hint">Use parentheses to capture parts of a filename.</p>
-          </div>
-          <div>
-            <label for="rename-template">Rename template</label>
-            <input id="rename-template" name="template" value="image_{1}.jpg" spellcheck="false" autocomplete="off">
-            <p class="hint">Insert captures with <code>{1}</code>, <code>{2}</code>, and so on.</p>
+        <div class="steps" id="steps">
+          <div class="step">
+            <p class="step-number">Step 1</p>
+            <div>
+              <label for="filter-regex-1">Match regular expression</label>
+              <input id="filter-regex-1" class="filter-input" value="^photo_([0-9]+)\.jpg$" spellcheck="false" autocomplete="off">
+              <p class="hint">Use parentheses to capture parts of a filename.</p>
+            </div>
+            <div>
+              <label for="rename-template-1">Rename template</label>
+              <input id="rename-template-1" class="template-input" value="image_{1}.jpg" spellcheck="false" autocomplete="off">
+              <p class="hint">Insert captures with <code>{1}</code> or <code>$1</code>, and use <code>$file_index</code> for a match-only counter.</p>
+            </div>
+            <span aria-hidden="true"></span>
           </div>
         </div>
+        <button type="button" class="add-step" id="add-step">Add step</button>
 
         <div class="actions">
           <button type="submit">Execute</button>
@@ -279,9 +365,10 @@
 
   <script>
     const form = document.querySelector('#rename-form');
+    const sampleSelect = document.querySelector('#sample-select');
     const filenamesInput = document.querySelector('#filenames');
-    const filterInput = document.querySelector('#filter-regex');
-    const templateInput = document.querySelector('#rename-template');
+    const steps = document.querySelector('#steps');
+    const addStepButton = document.querySelector('#add-step');
     const status = document.querySelector('#status');
     const results = document.querySelector('#results');
     const resultList = document.querySelector('#result-list');
@@ -291,12 +378,151 @@
       status.className = kind;
     }
 
-    function applyTemplate(template, match) {
-      return template.replace(/\{(\d+)\}/g, (token, groupNumber) => {
-        const index = Number(groupNumber);
+    function applyTemplate(template, match, fileIndex) {
+      return template.replace(/\$file_index|\{(\d+)\}|\$(\d+)/g, (token, braceGroup, dollarGroup) => {
+        if (token === '$file_index') return String(fileIndex);
+        const index = Number(braceGroup || dollarGroup);
         return index < match.length && match[index] !== undefined ? match[index] : token;
       });
     }
+
+    function parseRegex(pattern) {
+      const literal = pattern.match(/^\/([\s\S]*)\/([dgimsuvy]*)$/);
+      return literal ? new RegExp(literal[1], literal[2]) : new RegExp(pattern);
+    }
+
+    async function loadSampleList() {
+      try {
+        const response = await fetch('/api/samples');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const samples = await response.json();
+        samples.forEach((filename) => {
+          const option = document.createElement('option');
+          option.value = filename;
+          option.textContent = filename;
+          sampleSelect.append(option);
+        });
+      } catch (error) {
+        setStatus(`Unable to load samples: ${error.message}`, 'error');
+      }
+    }
+
+    async function loadSample(filename) {
+      try {
+        const response = await fetch(`/api/samples/${encodeURIComponent(filename)}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const sample = await response.json();
+        if (!Array.isArray(sample.filenames) || !Array.isArray(sample.inputs)) {
+          throw new Error('Sample must contain filenames and inputs arrays.');
+        }
+
+        filenamesInput.value = sample.filenames.join('\n');
+        steps.replaceChildren();
+        const sampleSteps = sample.inputs.length ? sample.inputs : [{}];
+        sampleSteps.forEach((inputValues, index) => {
+          if (!inputValues || typeof inputValues !== 'object' || Array.isArray(inputValues)) {
+            throw new Error(`Sample input ${index + 1} must be an object.`);
+          }
+          const step = createStep(index + 1);
+          Object.entries(inputValues).forEach(([key, value]) => {
+            if (typeof value !== 'string') return;
+            if (/^filter-regex-\d+$/.test(key)) {
+              step.querySelector('.filter-input').value = value;
+            } else if (/^rename-template-\d+$/.test(key)) {
+              step.querySelector('.template-input').value = value;
+            }
+          });
+          steps.append(step);
+        });
+        updateStepNumbers();
+        setStatus(`Loaded sample: ${filename}`, 'success');
+      } catch (error) {
+        setStatus(`Unable to load sample: ${error.message}`, 'error');
+      }
+    }
+
+    sampleSelect.addEventListener('change', () => {
+      if (sampleSelect.value) loadSample(sampleSelect.value);
+    });
+
+    loadSampleList();
+
+    function createStep(number) {
+      const step = document.createElement('div');
+      step.className = 'step';
+
+      const heading = document.createElement('p');
+      heading.className = 'step-number';
+      heading.textContent = `Step ${number}`;
+
+      const filterField = document.createElement('div');
+      const filterId = `filter-regex-${number}`;
+      const filterLabel = document.createElement('label');
+      filterLabel.htmlFor = filterId;
+      filterLabel.textContent = 'Match regular expression';
+      const filterInput = document.createElement('input');
+      filterInput.id = filterId;
+      filterInput.className = 'filter-input';
+      filterInput.spellcheck = false;
+      filterInput.autocomplete = 'off';
+      filterInput.placeholder = 'e.g. ^image_(\\d+)\\.jpg$';
+      const filterHint = document.createElement('p');
+      filterHint.className = 'hint';
+      filterHint.textContent = 'Use parentheses to capture parts of a filename.';
+      filterField.append(filterLabel, filterInput, filterHint);
+
+      const templateField = document.createElement('div');
+      const templateId = `rename-template-${number}`;
+      const templateLabel = document.createElement('label');
+      templateLabel.htmlFor = templateId;
+      templateLabel.textContent = 'Rename template';
+      const templateInput = document.createElement('input');
+      templateInput.id = templateId;
+      templateInput.className = 'template-input';
+      templateInput.spellcheck = false;
+      templateInput.autocomplete = 'off';
+      templateInput.placeholder = 'e.g. photo_{1}.jpg';
+      const templateHint = document.createElement('p');
+      templateHint.className = 'hint';
+      templateHint.textContent = 'Insert captures with {1} or $1, and use $file_index for a match-only counter.';
+      templateField.append(templateLabel, templateInput, templateHint);
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove-step';
+      removeButton.setAttribute('aria-label', `Remove step ${number}`);
+      removeButton.textContent = '×';
+
+      step.append(heading, filterField, templateField, removeButton);
+      return step;
+    }
+
+    function updateStepNumbers() {
+      Array.from(steps.children).forEach((step, index) => {
+        const number = index + 1;
+        step.querySelector('.step-number').textContent = `Step ${number}`;
+        const filterInput = step.querySelector('.filter-input');
+        const templateInput = step.querySelector('.template-input');
+        filterInput.id = `filter-regex-${number}`;
+        templateInput.id = `rename-template-${number}`;
+        step.querySelector('label').htmlFor = filterInput.id;
+        step.querySelectorAll('label')[1].htmlFor = templateInput.id;
+        const removeButton = step.querySelector('.remove-step');
+        if (removeButton) removeButton.setAttribute('aria-label', `Remove step ${number}`);
+      });
+    }
+
+    addStepButton.addEventListener('click', () => {
+      steps.append(createStep(steps.children.length + 1));
+      updateStepNumbers();
+      steps.lastElementChild.querySelector('.filter-input').focus();
+    });
+
+    steps.addEventListener('click', (event) => {
+      if (!event.target.matches('.remove-step')) return;
+      event.target.closest('.step').remove();
+      updateStepNumbers();
+    });
 
     form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -315,24 +541,39 @@
         return;
       }
 
-      let filter;
-      try {
-        filter = new RegExp(filterInput.value);
-      } catch (error) {
-        setStatus(`Invalid regular expression: ${error.message}`, 'error');
-        filterInput.focus();
-        return;
+      const configuredSteps = Array.from(steps.children).map((step, index) => ({
+        filterInput: step.querySelector('.filter-input'),
+        templateInput: step.querySelector('.template-input'),
+        number: index + 1
+      }));
+      const pipeline = [];
+      for (const step of configuredSteps) {
+        try {
+          pipeline.push({
+            filter: parseRegex(step.filterInput.value),
+            template: step.templateInput.value
+          });
+        } catch (error) {
+          setStatus(`Invalid regular expression in step ${step.number}: ${error.message}`, 'error');
+          step.filterInput.focus();
+          return;
+        }
       }
 
+      let fileIndex = 1;
       const rows = filenames.map((original) => {
-        const match = filter.exec(original);
-        return {
-          original,
-          // renamed: match ? applyTemplate(templateInput.value, match) : original,
-          renamed: match ? original.replace(filter, templateInput.value) : original,
-          matched: Boolean(match),
-          captures: match ? match.slice(1) : []
-        };
+        let current = original;
+        const process = pipeline.map(({ filter, template }) => {
+          const match = filter.exec(current);
+          const before = current;
+          if (match) {
+            const replacement = applyTemplate(template, match, fileIndex);
+            current = current.slice(0, match.index) + replacement + current.slice(match.index + match[0].length);
+          }
+          return { before, after: current, matched: Boolean(match), captures: match ? match.slice(1) : [] };
+        });
+        if (process.some(({ matched }) => matched)) fileIndex += 1;
+        return { original, renamed: current, process };
       });
 
       const counts = new Map();
@@ -341,9 +582,9 @@
       let changed = 0;
       let conflicts = 0;
 
-      rows.forEach(({ original, renamed, matched, captures }) => {
+      rows.forEach(({ original, renamed, process }) => {
         const item = document.createElement('li');
-        const isChanged = matched && original !== renamed;
+        const isChanged = original !== renamed;
         const isConflict = counts.get(renamed) > 1;
 
         if (!isChanged) item.classList.add('unchanged');
@@ -351,45 +592,48 @@
         if (isChanged) changed += 1;
         if (isConflict) conflicts += 1;
 
-        const before = document.createElement('span');
-        before.className = 'filename';
-        before.textContent = original;
+        const title = document.createElement('p');
+        title.className = 'process-title';
+        title.textContent = `Filename: ${original}`;
+        item.append(title);
 
-        const arrow = document.createElement('span');
-        arrow.className = 'arrow';
-        arrow.setAttribute('aria-hidden', 'true');
-        arrow.textContent = '→';
+        process.forEach(({ before: stageBefore, after: stageAfter, matched, captures }, index) => {
+          const stage = document.createElement('div');
+          stage.className = 'process-stage';
 
-        const after = document.createElement('span');
-        after.className = 'filename';
-        after.textContent = renamed;
+          const label = document.createElement('span');
+          label.className = 'stage-label';
+          label.textContent = `Step ${index + 1}${matched ? '' : ' · no match'}`;
 
-        item.append(before, arrow, after);
+          const before = document.createElement('span');
+          before.className = 'filename';
+          before.textContent = stageBefore;
 
-        if (captures.length) {
-          const variables = document.createElement('div');
-          variables.className = 'regex-vars';
-          variables.setAttribute('aria-label', 'Captured regex variables');
+          const arrow = document.createElement('span');
+          arrow.className = 'arrow';
+          arrow.setAttribute('aria-hidden', 'true');
+          arrow.textContent = '→';
 
-          captures.forEach((value, index) => {
-            const variable = document.createElement('span');
-            variable.className = 'regex-var';
+          const after = document.createElement('span');
+          after.className = 'stage-result filename';
+          after.textContent = stageAfter;
 
-            const name = document.createElement('strong');
-            name.textContent = `{${index + 1}}`;
-            variable.append(name, ` = ${value ?? ''}`);
-            variables.append(variable);
-          });
+          if (isConflict && index === process.length - 1) {
+            const note = document.createElement('span');
+            note.className = 'conflict-note';
+            note.textContent = 'Duplicate target';
+            after.append(document.createElement('br'), note);
+          }
 
-          item.append(variables);
-        }
-
-        if (isConflict) {
-          const note = document.createElement('span');
-          note.className = 'conflict-note';
-          note.textContent = 'Duplicate target';
-          after.append(document.createElement('br'), note);
-        }
+          stage.append(label, before, arrow, after);
+          if (captures.length) {
+            const variables = document.createElement('span');
+            variables.className = 'stage-note';
+            variables.textContent = captures.map((value, captureIndex) => `{${captureIndex + 1}} = ${value ?? ''}`).join(' · ');
+            after.append(variables);
+          }
+          item.append(stage);
+        });
 
         resultList.append(item);
       });

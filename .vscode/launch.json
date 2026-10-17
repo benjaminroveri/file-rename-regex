@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Serve Test Your Regex",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/test-your-regex.js",
+      "console": "integratedTerminal",
+      "serverReadyAction": {
+        "pattern": "Serving test-your-regex.html at (https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "openIntegratedBrowser"
+      }
+    }
+  ]
+}
