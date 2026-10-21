@@ -1,0 +1,17 @@
+{
+  "filenames": [
+    "photo_001.jpg",
+    "photo_002.jpg",
+    "notes.txt"
+  ],
+  "inputs": [
+    {
+      "filter-regex-1": "^photo_(\\d+)\\.jpg$",
+      "rename-template-1": "image_{1}.jpg"
+    },
+    {
+      "filter-regex-1": "^image_(\\d+)\\.jpg$",
+      "rename-template-1": "archive_{1}.jpg"
+    }
+  ]
+}

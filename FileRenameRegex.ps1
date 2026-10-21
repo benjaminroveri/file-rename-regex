@@ -2,7 +2,7 @@ function Show-Usage {
     [Console]::Error.WriteLine('Usage:')
     [Console]::Error.WriteLine('  .\FileRenameRegex.ps1 [--order=name|update|create] <folder> <filter> <template> [<filter> <template> ...]')
     [Console]::Error.WriteLine('  .\FileRenameRegex.ps1 [--order=name|update|create] <folder> <sample.json>')
-    [Console]::Error.WriteLine('JSON mode reads the inputs array. Templates accept {1}, $1, and $file_index placeholders.')
+    [Console]::Error.WriteLine('JSON mode reads the inputs array. Templates accept {1}, $1, $file_index, and $parent_folder_name placeholders.')
 }
 
 function ConvertTo-Filter {
@@ -61,6 +61,7 @@ try {
     if (-not (Test-Path -LiteralPath $folder -PathType Container)) {
         throw "Folder does not exist: $folder"
     }
+    $parentFolderName = (Get-Item -LiteralPath $folder -ErrorAction Stop).Name
 
     if ($scriptArgs.Count -eq 2 -and [string]$scriptArgs[1] -match '\.json$') {
         $sampleArgument = [string]$scriptArgs[1]
@@ -164,8 +165,11 @@ try {
             }
             $matchedAnyFilter = $true
 
-            $replacement = [regex]::Replace([string]$step[1], '\{(\d+)\}|\$(\d+)|\$file_index', {
+            $replacement = [regex]::Replace([string]$step[1], '\$parent_folder_name|\$file_index|\{(\d+)\}|\$(\d+)', {
                 param($placeholder)
+                if ($placeholder.Value -ceq '$parent_folder_name') {
+                    return $parentFolderName
+                }
                 if ($placeholder.Value -ceq '$file_index') {
                     return [string]$fileIndex
                 }

@@ -256,6 +256,17 @@
     .result-list li.unchanged { opacity: 0.56; }
     .result-list li.conflict { border-color: #e7b75c; background: #fff9e8; }
     .filename { overflow-wrap: anywhere; }
+    #console-output {
+      overflow-x: auto;
+      min-height: 72px;
+      padding: 14px;
+      border-radius: 10px;
+      background: #1e2430;
+      color: #f3efe6;
+      font: 0.82rem/1.55 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .arrow { color: var(--accent); font-family: inherit; font-weight: 800; }
     .conflict-note { color: var(--warning); font-family: Inter, sans-serif; font-size: 0.72rem; }
 
@@ -329,6 +340,21 @@
         <select id="sample-select">
           <option value="">Choose a sample...</option>
         </select>
+        <div class="step">
+          <div>
+            <label for="folder-path">Input folder</label>
+            <input id="folder-path" type="text" placeholder="Enter folder path">
+            <p class="hint" id="folder-name">No folder selected.</p>
+          </div>
+          <div>
+            <label for="file-order">Select order</label>
+            <select id="file-order">
+              <option value="name">Name</option>
+              <option value="update">Last updated</option>
+              <option value="create">Creation time</option>
+            </select>
+          </div>
+        </div>
         <label for="filenames" id="form-title">Filenames</label>
         <textarea id="filenames" name="filenames" spellcheck="false" placeholder="photo_001.jpg&#10;photo_002.jpg&#10;notes.txt"></textarea>
 
@@ -343,7 +369,7 @@
             <div>
               <label for="rename-template-1">Rename template</label>
               <input id="rename-template-1" class="template-input" value="image_{1}.jpg" spellcheck="false" autocomplete="off">
-              <p class="hint">Insert captures with <code>{1}</code> or <code>$1</code>, and use <code>$file_index</code> for a match-only counter.</p>
+              <p class="hint">Use <code>{1}</code> or <code>$1</code> for captures, <code>$file_index</code> for the match counter, and <code>$parent_folder_name</code> for the selected folder name.</p>
             </div>
             <span aria-hidden="true"></span>
           </div>
@@ -351,7 +377,7 @@
         <button type="button" class="add-step" id="add-step">Add step</button>
 
         <div class="actions">
-          <button type="submit">Execute</button>
+          <button type="submit">Preview</button>
           <p id="status" role="status" aria-live="polite">Ready to preview.</p>
         </div>
       </form>
@@ -359,6 +385,11 @@
       <section class="results" id="results" aria-labelledby="results-title">
         <h2 id="results-title">Preview</h2>
         <ul class="result-list" id="result-list"></ul>
+        <div class="actions">
+          <button type="button" id="rename" disabled>Rename</button>
+        </div>
+        <label for="console-output">Command and console output</label>
+        <pre id="console-output" aria-live="polite">Preview the changes, then select Rename to run the script.</pre>
       </section>
     </section>
   </main>
@@ -367,19 +398,109 @@
     const form = document.querySelector('#rename-form');
     const sampleSelect = document.querySelector('#sample-select');
     const filenamesInput = document.querySelector('#filenames');
+    const folderPathInput = document.querySelector('#folder-path');
+    const folderName = document.querySelector('#folder-name');
+    const fileOrder = document.querySelector('#file-order');
     const steps = document.querySelector('#steps');
     const addStepButton = document.querySelector('#add-step');
     const status = document.querySelector('#status');
     const results = document.querySelector('#results');
     const resultList = document.querySelector('#result-list');
+    const renameButton = document.querySelector('#rename');
+    const consoleOutput = document.querySelector('#console-output');
+    let selectedFolder = '';
+    let currentPreview = null;
+    let loadedSample = null;
+    let folderLoadTimer = null;
+    let folderLoadSequence = 0;
+    let platform = { script: 'file-rename-regex.sh', windows: false };
+    const initialFilenames = filenamesInput.value;
+    const initialFilter = steps.querySelector('.filter-input').value;
+    const initialTemplate = steps.querySelector('.template-input').value;
+
+    function configSelected() {
+      return Boolean(sampleSelect.value);
+    }
 
     function setStatus(message, kind = '') {
       status.textContent = message;
       status.className = kind;
     }
 
-    function applyTemplate(template, match, fileIndex) {
-      return template.replace(/\$file_index|\{(\d+)\}|\$(\d+)/g, (token, braceGroup, dollarGroup) => {
+    function clearPreview() {
+      currentPreview = null;
+      renameButton.disabled = true;
+      resultList.replaceChildren();
+      results.classList.remove('visible');
+      consoleOutput.textContent = 'Preview the changes, then select Rename to run the script.';
+    }
+
+    function updateReadonlyState() {
+      const locked = configSelected();
+      filenamesInput.readOnly = locked || Boolean(selectedFolder);
+      steps.querySelectorAll('.filter-input, .template-input').forEach((input) => {
+        input.readOnly = locked;
+      });
+      addStepButton.disabled = locked;
+      steps.querySelectorAll('.remove-step').forEach((button) => {
+        button.disabled = locked;
+      });
+    }
+
+    async function loadFolderFiles() {
+      if (!selectedFolder) return;
+      const response = await fetch(`/api/files?order=${encodeURIComponent(fileOrder.value)}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      filenamesInput.value = data.map(({ name }) => name).join('\n');
+      updateReadonlyState();
+      clearPreview();
+    }
+
+    async function loadFolder(folder, sequence) {
+      const response = await fetch('/api/folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (sequence !== undefined && sequence !== folderLoadSequence) return;
+      selectedFolder = data.folder;
+      folderPathInput.value = selectedFolder;
+      folderName.textContent = selectedFolder;
+      await loadFolderFiles();
+      setStatus('Folder loaded. Preview the changes before renaming.', 'success');
+    }
+
+    function shellQuote(value) {
+      return `'${value.replace(/'/g, "'\\''")}'`;
+    }
+
+    function powershellQuote(value) {
+      return `"${value.replace(/`/g, '``').replace(/"/g, '`"').replace(/\$/g, '`$')}"`;
+    }
+
+    function getParentFolderName() {
+      const folder = selectedFolder.replace(/[\\/]+$/, '');
+      return folder.slice(Math.max(folder.lastIndexOf('/'), folder.lastIndexOf('\\')) + 1) || folder;
+    }
+
+    function getCommand(inputs) {
+      const args = [
+        platform.script,
+        `--order=${fileOrder.value}`,
+        selectedFolder,
+        ...inputs.flatMap(({ filter, template }) => [filter, template])
+      ];
+      return platform.windows
+        ? `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${powershellQuote(args[0])} ${args.slice(1).map(powershellQuote).join(' ')}`
+        : `bash ${args.map(shellQuote).join(' ')}`;
+    }
+
+    function applyTemplate(template, match, fileIndex, parentFolderName) {
+      return template.replace(/\$parent_folder_name|\$file_index|\{(\d+)\}|\$(\d+)/g, (token, braceGroup, dollarGroup) => {
+        if (token === '$parent_folder_name') return parentFolderName;
         if (token === '$file_index') return String(fileIndex);
         const index = Number(braceGroup || dollarGroup);
         return index < match.length && match[index] !== undefined ? match[index] : token;
@@ -416,6 +537,7 @@
           throw new Error('Sample must contain filenames and inputs arrays.');
         }
 
+        loadedSample = sample;
         filenamesInput.value = sample.filenames.join('\n');
         steps.replaceChildren();
         const sampleSteps = sample.inputs.length ? sample.inputs : [{}];
@@ -435,17 +557,109 @@
           steps.append(step);
         });
         updateStepNumbers();
+        updateReadonlyState();
+        if (selectedFolder) await loadFolderFiles();
+        clearPreview();
         setStatus(`Loaded sample: ${filename}`, 'success');
       } catch (error) {
         setStatus(`Unable to load sample: ${error.message}`, 'error');
       }
     }
 
-    sampleSelect.addEventListener('change', () => {
-      if (sampleSelect.value) loadSample(sampleSelect.value);
+    sampleSelect.addEventListener('change', async () => {
+      if (sampleSelect.value) {
+        loadSample(sampleSelect.value);
+      } else {
+        filenamesInput.value = initialFilenames;
+        steps.replaceChildren(createStep(1));
+        steps.querySelector('.filter-input').value = initialFilter;
+        steps.querySelector('.template-input').value = initialTemplate;
+        loadedSample = null;
+        fileOrder.value = 'name';
+        updateReadonlyState();
+        clearPreview();
+        setStatus('Ready to preview.');
+        if (selectedFolder) {
+          await fetch('/api/folder', { method: 'DELETE' });
+          selectedFolder = '';
+          folderPathInput.value = '';
+          folderName.textContent = 'No folder selected.';
+        }
+        updateReadonlyState();
+      }
+    });
+
+    folderPathInput.addEventListener('input', () => {
+      clearTimeout(folderLoadTimer);
+      const sequence = ++folderLoadSequence;
+      const folder = folderPathInput.value.trim();
+      if (selectedFolder && folder === selectedFolder) return;
+
+      const hadSelectedFolder = Boolean(selectedFolder);
+      selectedFolder = '';
+      fetch('/api/folder', { method: 'DELETE' });
+      folderName.textContent = 'No folder selected.';
+      if (hadSelectedFolder) {
+        filenamesInput.value = configSelected() && loadedSample
+          ? loadedSample.filenames.join('\n')
+          : '';
+        updateReadonlyState();
+        clearPreview();
+      }
+
+      if (!folder) return;
+      folderLoadTimer = setTimeout(async () => {
+        if (sequence !== folderLoadSequence || folderPathInput.value.trim() !== folder) return;
+        try {
+          await loadFolder(folder, sequence);
+        } catch {
+          if (sequence === folderLoadSequence) console.log('folder not found');
+        }
+      }, 500);
+    });
+
+    fileOrder.addEventListener('change', async () => {
+      clearPreview();
+      if (!selectedFolder) return;
+      try {
+        await loadFolderFiles();
+        setStatus('File order updated. Preview the changes again.', 'success');
+      } catch (error) {
+        setStatus(error.message, 'error');
+      }
+    });
+
+    form.addEventListener('input', (event) => {
+      if (event.target === fileOrder || event.target === sampleSelect) return;
+      clearPreview();
+    });
+
+    renameButton.addEventListener('click', async () => {
+      if (!currentPreview || !selectedFolder) return;
+      renameButton.disabled = true;
+      consoleOutput.textContent = `$ ${getCommand(currentPreview.inputs)}\n\nRunning...\n`;
+      try {
+        const response = await fetch('/api/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: fileOrder.value, inputs: currentPreview.inputs })
+        });
+        const result = await response.json();
+        consoleOutput.textContent = `$ ${getCommand(currentPreview.inputs)}\n\n${result.output || ''}${result.error ? `\n${result.error}` : ''}\nExit code: ${result.code ?? 'not started'}`;
+        setStatus(response.ok ? 'Rename script completed.' : 'Rename script failed. See console output.', response.ok ? 'success' : 'error');
+      } catch (error) {
+        consoleOutput.textContent += `\n${error.message}`;
+        setStatus('Unable to run rename script.', 'error');
+      } finally {
+        renameButton.disabled = !currentPreview || !selectedFolder;
+      }
     });
 
     loadSampleList();
+    fetch('/api/platform')
+      .then((response) => response.json())
+      .then((data) => { platform = data; })
+      .catch((error) => setStatus(`Unable to detect script platform: ${error.message}`, 'error'));
 
     function createStep(number) {
       const step = document.createElement('div');
@@ -484,7 +698,7 @@
       templateInput.placeholder = 'e.g. photo_{1}.jpg';
       const templateHint = document.createElement('p');
       templateHint.className = 'hint';
-      templateHint.textContent = 'Insert captures with {1} or $1, and use $file_index for a match-only counter.';
+      templateHint.textContent = 'Use {1} or $1 for captures, $file_index for the match counter, and $parent_folder_name for the selected folder name.';
       templateField.append(templateLabel, templateInput, templateHint);
 
       const removeButton = document.createElement('button');
@@ -515,6 +729,7 @@
     addStepButton.addEventListener('click', () => {
       steps.append(createStep(steps.children.length + 1));
       updateStepNumbers();
+      clearPreview();
       steps.lastElementChild.querySelector('.filter-input').focus();
     });
 
@@ -522,6 +737,7 @@
       if (!event.target.matches('.remove-step')) return;
       event.target.closest('.step').remove();
       updateStepNumbers();
+      clearPreview();
     });
 
     form.addEventListener('submit', (event) => {
@@ -532,7 +748,7 @@
         .map((name) => name.trim())
         .filter(Boolean);
 
-      resultList.replaceChildren();
+      clearPreview();
       results.classList.remove('visible');
 
       if (!filenames.length) {
@@ -546,9 +762,15 @@
         templateInput: step.querySelector('.template-input'),
         number: index + 1
       }));
+      if (!configuredSteps.length) {
+        setStatus('Add at least one filter and template step.', 'error');
+        return;
+      }
       const pipeline = [];
+      const inputs = [];
       for (const step of configuredSteps) {
         try {
+          inputs.push({ filter: step.filterInput.value, template: step.templateInput.value });
           pipeline.push({
             filter: parseRegex(step.filterInput.value),
             template: step.templateInput.value
@@ -567,7 +789,7 @@
           const match = filter.exec(current);
           const before = current;
           if (match) {
-            const replacement = applyTemplate(template, match, fileIndex);
+            const replacement = applyTemplate(template, match, fileIndex, getParentFolderName());
             current = current.slice(0, match.index) + replacement + current.slice(match.index + match[0].length);
           }
           return { before, after: current, matched: Boolean(match), captures: match ? match.slice(1) : [] };
@@ -641,6 +863,11 @@
       results.classList.add('visible');
       const conflictMessage = conflicts ? ` ${conflicts} conflict${conflicts === 1 ? '' : 's'} found.` : '';
       setStatus(`${changed} of ${rows.length} filename${rows.length === 1 ? '' : 's'} would change.${conflictMessage}`, conflicts ? 'error' : 'success');
+      currentPreview = { inputs, rows };
+      renameButton.disabled = !selectedFolder || conflicts > 0;
+      consoleOutput.textContent = selectedFolder
+        ? `$ ${getCommand(inputs)}\n\nReady. Rename creates a timestamped output folder and leaves the source files unchanged.`
+        : 'Select an input folder to enable Rename.';
     });
   </script>
 </body>

@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   printf 'Usage:\n  %s [--order=name|update|create] <folder> <filter> <template> [<filter> <template> ...]\n' "$0" >&2
   printf '  %s [--order=name|update|create] <folder> <sample.json>\n' "$0" >&2
-  printf 'JSON sample mode reads the inputs array. Templates accept {1}, $1, and $file_index placeholders.\n' >&2
+  printf 'JSON sample mode reads the inputs array. Templates accept {1}, $1, $file_index, and $parent_folder_name placeholders.\n' >&2
 }
 
 order=name
@@ -50,6 +50,7 @@ if [[ ! -d $folder ]]; then
   exit 1
 fi
 folder=$(cd -- "$folder" && pwd -P)
+parent_folder_name=$(basename -- "$folder")
 
 if [[ $# -eq 1 && $1 == *.json ]]; then
   sample_file=$1
@@ -189,6 +190,7 @@ for file in "${files[@]}"; do
       use warnings;
       my $name = shift @ARGV;
       my $file_index = shift @ARGV;
+      my $parent_folder_name = shift @ARGV;
       my $matched = 0;
       while (@ARGV) {
         my ($filter, $template) = splice @ARGV, 0, 2;
@@ -203,16 +205,22 @@ for file in "${files[@]}"; do
           my @captures = map {
             $-[$_] < 0 ? "" : substr($name, $-[$_], $+[$_] - $-[$_])
           } 0 .. $#-;
-          $template =~ s/\$file_index/$file_index/g;
-          $template =~ s/\{(\d+)\}|\$(\d+)/do {
-            my $index = defined $1 ? $1 : $2;
-            $index < @captures ? $captures[$index] : $&
-          }/ge;
+          $template =~ s/(\$parent_folder_name|\$file_index|\{(\d+)\}|\$(\d+))/do {
+            my ($token, $brace_index, $dollar_index) = ($1, $2, $3);
+            if ($token eq q{$parent_folder_name}) {
+              $parent_folder_name;
+            } elsif ($token eq q{$file_index}) {
+              $file_index;
+            } else {
+              my $index = defined $brace_index ? $brace_index : $dollar_index;
+              $index < @captures ? $captures[$index] : $token;
+            }
+          }/gex;
           $name =~ s/$pattern/$template/;
         }
       }
       print $name, "\0", $matched, "\0";
-    ' "$basename" "$file_index" "${filters_and_templates[@]}" >"$result_data" || {
+    ' "$basename" "$file_index" "$parent_folder_name" "${filters_and_templates[@]}" >"$result_data" || {
       printf 'Could not transform filename: %s\n' "$basename" >&2
       exit 1
     }
